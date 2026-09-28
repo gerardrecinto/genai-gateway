@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "genai-gateway"
+version = "0.1.0"
+description = "Provider-agnostic GenAI gateway: deterministic policy and retrieval first, model call only when necessary, Redis-backed caching, rate limiting, tracing, audit logging."
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+include = ["genai_gateway*"]
