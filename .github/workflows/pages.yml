@@ -1,0 +1,44 @@
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", "genai_gateway/**", "requirements.txt", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Assemble site
+        run: |
+          mkdir -p _site/py/cache _site/py/policy _site/py/providers _site/py/rate_limit _site/py/retrieval _site/wheels
+          cp site/index.html _site/
+          cp genai_gateway/__init__.py genai_gateway/audit.py genai_gateway/gateway.py genai_gateway/metrics.py genai_gateway/schemas.py genai_gateway/tracing.py _site/py/
+          cp genai_gateway/cache/*.py _site/py/cache/
+          cp genai_gateway/policy/*.py _site/py/policy/
+          cp genai_gateway/providers/base.py genai_gateway/providers/mock_provider.py _site/py/providers/
+          cp genai_gateway/rate_limit/*.py _site/py/rate_limit/
+          cp genai_gateway/retrieval/*.py _site/py/retrieval/
+          python3 -m pip download prometheus_client --no-deps -d _site/wheels -q
+          (cd _site/wheels && ls *.whl > manifest.txt)
+          touch _site/.nojekyll
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v5
