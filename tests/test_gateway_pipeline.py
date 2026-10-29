@@ -103,3 +103,54 @@ def test_invalid_request_rejected():
     client = TestClient(build_test_app(make_gateway()))
     response = client.post("/generate", json={"client_id": "", "prompt": ""})
     assert response.status_code == 422
+
+
+def test_cached_uncertain_answer_still_requires_human_review():
+    client = TestClient(build_test_app(make_gateway()))
+    payload = {"client_id": "review", "prompt": "why slow"}
+    first = client.post("/generate", json=payload).json()
+    repeated = client.post("/generate", json=payload).json()
+    assert first["decision_source"] == "model"
+    assert repeated["decision_source"] == "cache"
+    assert repeated["text"] == first["text"]
+    assert repeated["high_confidence"] is False
+    assert repeated["needs_human_review"] is True
+
+
+def test_cache_read_failure_does_not_drop_a_valid_answer():
+    class UnavailableReadCache(InMemoryCache):
+        def get(self, key):
+            raise ConnectionError("cache connection lost")
+
+    gateway = make_gateway()
+    gateway.cache = UnavailableReadCache()
+    client = TestClient(build_test_app(gateway))
+    result = client.post("/generate", json={"client_id": "read", "prompt": "Explain local build caching"})
+    assert result.status_code == 200
+    assert result.json()["decision_source"] == "model"
+
+
+def test_cache_write_failure_does_not_drop_a_valid_answer():
+    class UnavailableWriteCache(InMemoryCache):
+        def set(self, key, value, ttl_seconds):
+            raise ConnectionError("cache connection lost")
+
+    gateway = make_gateway()
+    gateway.cache = UnavailableWriteCache()
+    client = TestClient(build_test_app(gateway))
+    result = client.post("/generate", json={"client_id": "write", "prompt": "Explain local build caching"})
+    assert result.status_code == 200
+    assert result.json()["decision_source"] == "model"
+
+
+def test_cache_write_failure_does_not_drop_a_runbook_answer():
+    class UnavailableWriteCache(InMemoryCache):
+        def set(self, key, value, ttl_seconds):
+            raise ConnectionError("cache connection lost")
+
+    gateway = make_gateway()
+    gateway.cache = UnavailableWriteCache()
+    client = TestClient(build_test_app(gateway))
+    result = client.post("/generate", json={"client_id": "runbook", "prompt": "kubectl rollout undo"})
+    assert result.status_code == 200
+    assert result.json()["decision_source"] == "retrieval"

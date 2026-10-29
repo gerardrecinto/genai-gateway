@@ -7,6 +7,7 @@ non-resolve — the model is the last resort, not the default path.
 
 import hashlib
 import json
+import logging
 import time
 
 from genai_gateway import metrics
@@ -18,6 +19,8 @@ from genai_gateway.rate_limit.token_bucket import TokenBucketLimiter
 from genai_gateway.retrieval.knowledge_base import match_knowledge_base
 from genai_gateway.schemas import GatewayRequest, GatewayResponse
 from genai_gateway.tracing import RequestTrace
+
+logger = logging.getLogger(__name__)
 
 HEDGING_PHRASES = [
     "i don't have enough context",
@@ -97,16 +100,17 @@ class GenAIGateway:
         cache_key = build_cache_key(request.prompt, kb_match.text if kb_match.decision == "enrich" else None)
 
         with trace.stage("cache_lookup"):
-            cached_text = self.cache.get(cache_key)
+            cached_text = self._read_cache(cache_key)
         if cached_text is not None:
+            confident = assess_confidence(cached_text)
             return self._finish(
                 request=request,
                 trace=trace,
                 start=start,
                 decision_source="cache",
                 text=cached_text,
-                high_confidence=True,
-                needs_human_review=False,
+                high_confidence=confident,
+                needs_human_review=not confident,
                 blocked_reason=None,
                 pii_types=policy_result.pii_types_detected,
                 cache_key=cache_key,
@@ -114,7 +118,7 @@ class GenAIGateway:
             )
 
         if kb_match.decision == "resolve":
-            self.cache.set(cache_key, kb_match.text, self.cache_ttl_seconds)
+            self._write_cache(cache_key, kb_match.text)
             return self._finish(
                 request=request,
                 trace=trace,
@@ -170,7 +174,7 @@ class GenAIGateway:
             )
 
         confident = assess_confidence(provider_response.text)
-        self.cache.set(cache_key, provider_response.text, self.cache_ttl_seconds)
+        self._write_cache(cache_key, provider_response.text)
 
         return self._finish(
             request=request,
@@ -188,6 +192,19 @@ class GenAIGateway:
             prompt_tokens=provider_response.prompt_tokens,
             completion_tokens=provider_response.completion_tokens,
         )
+
+    def _read_cache(self, key: str) -> str | None:
+        try:
+            return self.cache.get(key)
+        except Exception:
+            logger.warning("Cache read unavailable; continuing without a cached answer")
+            return None
+
+    def _write_cache(self, key: str, text: str) -> None:
+        try:
+            self.cache.set(key, text, self.cache_ttl_seconds)
+        except Exception:
+            logger.warning("Cache write unavailable; returning the answer without caching")
 
     def _finish(
         self,

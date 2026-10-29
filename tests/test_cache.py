@@ -1,8 +1,13 @@
+import os
 import time
 
 import pytest
 
-from genai_gateway.cache.cache_backend import InMemoryCache, RedisCache, get_cache_backend
+from genai_gateway.cache.cache_backend import (
+    InMemoryCache,
+    RedisCache,
+    get_cache_backend,
+)
 
 
 def test_in_memory_cache_set_and_get():
@@ -37,7 +42,9 @@ def test_get_cache_backend_returns_in_memory_when_no_url():
 def redis_cache():
     try:
         cache = RedisCache("redis://localhost:6379")
-    except Exception:
+    except Exception as exc:
+        if os.environ.get("REDIS_TEST_REQUIRED") == "1":
+            pytest.fail(f"CI requires a reachable Redis service: {type(exc).__name__}")
         pytest.skip("local Redis not reachable at redis://localhost:6379 (docker compose up -d redis)")
     yield cache
 
@@ -52,6 +59,6 @@ def test_redis_cache_miss_returns_none(redis_cache):
     assert redis_cache.get("genai-gateway:test:definitely-not-set") is None
 
 
-def test_get_cache_backend_returns_redis_cache_when_reachable():
+def test_get_cache_backend_returns_redis_cache_when_reachable(redis_cache):
     backend = get_cache_backend("redis://localhost:6379")
     assert isinstance(backend, RedisCache)

@@ -1,19 +1,8 @@
 # genai-gateway
 
-A provider-agnostic GenAI gateway: deterministic policy checks and
-structured retrieval run first, a model call happens only when neither
-resolves the request, and every path is cached, rate-limited, traced, and
-audit-logged without storing raw prompt/response content.
+A local GenAI gateway for engineers testing policy and retrieval before a model call. It includes a mock provider, optional Redis caching, process-local rate limiting, timing, and audit records without raw prompt or response text.
 
-**Honesty note**: I have no prior professional experience operating
-production GenAI infrastructure at this scope. This is an independently
-built portfolio project demonstrating the pattern hands-on — validation,
-retrieval-before-model, caching, rate limiting, response validation and
-escalation, tracing, audit logging — using a local mock model provider so
-none of it depends on a paid API. My real production GenAI work
-(`devops-mcp`, `ci-triage`) uses the same rules-first philosophy (RAIL:
-Rules Applied Instantly, LLM only for what's left) at smaller scope; this
-project generalizes that pattern into a standalone gateway.
+**Scope:** I built this independently as a portfolio project. I have no prior professional experience operating production GenAI infrastructure at this scope. The default provider is a local mock, so the checked-in path needs no paid API.
 
 ## Request path
 
@@ -27,7 +16,7 @@ pydantic validation (schemas.GatewayRequest)  -- 422 on malformed input
 rate limiter (per-client token bucket)         -- 429 if exceeded
       |
       v
-policy layer (policy/rules.py)                 -- deterministic, <1ms
+policy layer (policy/rules.py)                 -- deterministic
       |  blocked?  --yes--> return policy_block, no cache write, no model call
       v no
 retrieval (retrieval/knowledge_base.py)
@@ -49,24 +38,34 @@ confidence heuristic (gateway.py::assess_confidence)
 cache write, metrics, audit log, return "model"
 ```
 
-Every branch — including the blocked and fallback ones — goes through the
-same audit-logging and metrics path (`GenAIGateway._finish`), so nothing
-exits the pipeline unaccounted for.
+Completed generation decisions, including policy blocks and provider fallbacks, use the same audit and metrics path (`GenAIGateway._finish`). Schema rejections (422) and rate-limit rejections (429) are separate HTTP error paths. A cache outage does not discard a valid answer.
 
 ## Local quickstart
 
 ```bash
+git clone https://github.com/gerardrecinto/genai-gateway.git
+cd genai-gateway
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pip install -e .
-
-# optional: real Redis instead of the in-memory cache fallback
-docker compose up -d redis
-
 uvicorn genai_gateway.app:app --port 8000
-# in another shell:
+```
+
+In another terminal, start from the clone's parent directory and run:
+
+```bash
+cd genai-gateway
 scripts/smoke_test.sh http://localhost:8000
 ```
+
+The default cache is in memory. To use local Redis, stop the API, then run:
+
+```bash
+docker compose up -d --wait redis
+REDIS_URL=redis://127.0.0.1:6379 uvicorn genai_gateway.app:app --port 8000
+```
+
+Docker is optional. Redis is bound to loopback for this local demo. The service has no authentication, and the caller supplies `client_id`; the rate limiter is a fairness mechanism, not a security boundary.
 
 No API key is required — the default provider is `MockProvider`
 (`genai_gateway/providers/mock_provider.py`), a deterministic local
@@ -79,9 +78,9 @@ redis` hasn't been run):
 python -m pytest tests/ -v
 ```
 
-**Observed**: 30/30 tests passing in this repo, including live
-integration tests against a real local Redis instance (not mocked) — see
-`tests/test_cache.py::test_redis_cache_set_and_get` and related.
+CI runs the tests with a real Redis service and fails if that service is unavailable. Without local Redis, the three integration tests skip with an explanation. CI also checks package installation, the HTTP smoke flow, audit output, lint, and dependency advisories.
+
+The request's `context` mapping is reserved. It is not forwarded to the provider or included in cache keys.
 
 ## Why retrieval-before-model, not RAG
 
@@ -101,10 +100,7 @@ here, noted as the natural next slice.
 `assess_confidence()` is a hedging-phrase heuristic ("I'm not sure", "it
 depends", etc.) — genuinely simple, not a calibrated confidence score.
 A response that trips it sets `needs_human_review: true` in the response.
-This is intentionally conservative: false positives (flagging a
-confident answer as uncertain) cost a human a few seconds of review;
-false negatives (missing genuine uncertainty) cost a wrong answer going
-out unflagged. The heuristic is tuned to fail toward the cheaper mistake.
+It detects phrases, not whether an answer is correct. Cached answers use the same heuristic and keep the human-review requirement.
 
 ## Provider-agnostic design
 
@@ -138,7 +134,7 @@ genai_gateway/
   gateway.py                orchestrates the full pipeline
   app.py                    FastAPI service
 docker-compose.yml          local Redis for the optional cache backend
-tests/                       30 unit + integration tests (pytest), Redis tests live
+tests/                       unit and Redis integration tests (pytest)
 scripts/smoke_test.sh        black-box smoke test against a running instance
 docs/                         architecture, security, cost, troubleshooting, portfolio summary
 ```

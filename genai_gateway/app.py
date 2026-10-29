@@ -11,6 +11,7 @@ import os
 from fastapi import FastAPI, HTTPException, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from genai_gateway.audit import configure_audit_logging
 from genai_gateway.cache.cache_backend import get_cache_backend
 from genai_gateway.gateway import GenAIGateway, RateLimitExceeded
 from genai_gateway.providers.mock_provider import MockProvider
@@ -21,6 +22,7 @@ RATE_LIMIT_CAPACITY = int(os.environ.get("RATE_LIMIT_CAPACITY", "20"))
 RATE_LIMIT_REFILL_PER_SECOND = float(os.environ.get("RATE_LIMIT_REFILL_PER_SECOND", "1"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 
+configure_audit_logging()
 app = FastAPI(title="genai-gateway")
 
 _gateway = GenAIGateway(

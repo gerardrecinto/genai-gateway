@@ -12,6 +12,16 @@ from dataclasses import asdict, dataclass
 logger = logging.getLogger("genai_gateway.audit")
 
 
+def configure_audit_logging() -> None:
+    """Make the local API's JSON audit records visible without logging prompts."""
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
+
 def _hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
