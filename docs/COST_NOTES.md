@@ -1,43 +1,13 @@
-# Cost notes
+# Cost and usage notes
 
-## Design decisions and their cost rationale
+The checked-in API, browser demo, tests, and smoke flow use `MockProvider`. They need no paid model API or managed Redis.
 
-- **Policy and retrieval run before any model call.** This is the primary
-  cost lever in the whole design: a blocked or KB-resolved request costs
-  microseconds of CPU, not a model invocation. In a real deployment with
-  paid API calls, this is the difference between paying for every request
-  and paying only for the ones that actually need generation.
-- **Caching avoids repeat model calls for repeat questions.**
-  `cache/cache_backend.py` keys on `(prompt, retrieved_context)`, so two
-  clients asking the same resolved question hit the cache on the second
-  request, not the model, regardless of `client_id`. TTL defaults to 300s
-  (`CACHE_TTL_SECONDS` env var) — tunable per how fast the underlying
-  answers actually change.
-- **In-memory cache as the zero-infrastructure default.** Redis is
-  optional (`REDIS_URL` env var); a single-instance deployment or local
-  dev loop doesn't need to run and pay for a Redis instance at all.
-  `get_cache_backend()` fails open to in-memory if Redis is configured but
-  unreachable, rather than failing every request.
-- **Rate limiting protects against runaway cost from a single client**,
-  not just abuse — a client stuck in a retry loop hits 429s instead of
-  generating unbounded model calls.
-- **Approximate token counting (`providers/base.py::approximate_token_count`)
-  has no tokenizer dependency** (no `tiktoken` or model-specific vocab)
-  — a whitespace-split estimate is enough for *relative* cost tracking in
-  a portfolio project. Explicitly not billing-accurate; a real deployment
-  should use the provider's actual usage response (see
-  `AnthropicProvider.generate`, which does use real `response.usage`
-  when that path is actually exercised).
+A policy block, strong runbook match, or cached answer avoids a provider call. The tests establish these code paths. They do not establish dollar savings or a latency target with a real model provider.
 
-## What would cost money if the real provider path were used
+Cache keys use the prompt and retrieved context. The default TTL is 300 seconds, configurable through `CACHE_TTL_SECONDS`. Request `context` is reserved and does not affect the provider or cache key.
 
-- Every request reaching `decision_source: "model"` with `AnthropicProvider`
-  active would incur real API cost, scaled by prompt + completion tokens.
-- An optional managed Redis (e.g., ElastiCache) instead of local Docker
-  Redis, sized for whatever request volume actually needs shared caching
-  across multiple gateway instances — not needed for this single-instance
-  portfolio setup.
+The process-local token bucket limits requests for a given caller-supplied client ID. It does not authenticate that identity or enforce a shared spending budget.
 
-Nothing in this project has incurred real API or cloud cost — `MockProvider`
-is the only provider path exercised in the test suite and smoke test, and
-Redis here is a local Docker container, not a managed cloud instance.
+The [token estimator](../genai_gateway/providers/base.py) is approximate. It is not suitable for billing. The unverified Anthropic adapter reads reported usage when available, but that code still needs integration validation.
+
+Using a paid provider or managed cache would add costs that this repository does not measure. The local mock path is an evaluation example, not a revenue forecast or a statement about historical billing.
