@@ -1,78 +1,21 @@
 # Portfolio summary
 
-## What this is
+This is an independently built local gateway. It demonstrates policy and structured retrieval before a model call with a deterministic mock provider.
 
-An independently built provider-agnostic GenAI gateway demonstrating the
-production pattern for putting an LLM behind deterministic guardrails:
-policy checks and structured retrieval run first, a model call happens
-only when neither resolves the request, and every path — including
-blocked and fallback paths — is cached, rate-limited, traced, and
-audit-logged.
+## Claims backed by this repository
 
-## Resume bullets (accurate language only)
+- Implemented a provider interface with local mock generation, policy checks, and a hand-authored runbook lookup.
+- Added Redis-backed response caching with an in-memory option and graceful cache-outage handling.
+- Kept the same human-review heuristic on generated and cached answers.
+- Added per-client token buckets, request IDs, stage timings, Prometheus metrics, and audit records without raw prompt or response text.
+- Added CI that requires real Redis integration tests and checks the local HTTP flow, audit output, lint, and dependency advisories.
 
-- Built a provider-agnostic GenAI gateway applying policy checks and
-  structured retrieval before any model call, cutting model invocations
-  for requests a deterministic layer can already resolve.
-- Implemented Redis-backed response caching with an in-memory fallback
-  behind one interface, verified against a live local Redis instance.
-- Designed a confidence/escalation heuristic that flags low-confidence
-  model responses for human review rather than returning them unflagged.
-- Implemented per-client rate limiting, request tracing with per-stage
-  latency breakdown, Prometheus metrics, and audit logging that never
-  persists raw prompt or response content.
+See the current [Gateway checks](https://github.com/gerardrecinto/genai-gateway/actions/workflows/ci.yml) for results. Local runs without Redis skip those integration tests explicitly.
 
-**Not used, and why**: "operated in production," "served [N] requests,"
-"reduced API cost by [X]%" — none of these are true for this project. No
-paid model API was called; `MockProvider` is the only provider exercised.
+## Limits to explain in an interview
 
-## Interview talking points
+The rate limiter trusts a caller-supplied client ID and is process-local. It is not authentication or a shared spending limit. Policy checks are literal regular expressions. Retrieval uses three hand-authored entries and substring matching. Confidence is a hedging-phrase heuristic, not a calibrated probability or correctness check.
 
-**"Why policy and retrieval before the model, not after?"**
-Cost and auditability both point the same direction. A blocked or
-KB-resolved request costs microseconds of CPU, and its "reasoning" is a
-named rule or a hand-authored answer you can point to directly. Running
-the checks after generation would mean paying for a model call on every
-request regardless of whether it needed one, and would mean a policy
-violation had already reached the model at least once before being caught.
+The Anthropic adapter has not been exercised against the real API. It still needs SDK, model-selection, and integration validation. A one-line provider swap does not establish that those requirements are met.
 
-**"How does this relate to your production RAIL work?"**
-Directly. `ci-triage` and `devops-mcp` use the same rules-first,
-LLM-only-for-what's-left philosophy at a smaller scope (CI failure
-classification, incident triage). This project generalizes that pattern
-into a standalone gateway shape: policy, retrieval, cache, then model,
-with the same principle underneath each stage's ordering.
-
-**"What's the weakest part of this design?"**
-Two things, honestly. First, `client_id` is self-reported with no
-authentication behind it, which defeats the rate limiter as a real
-security control even though it still works as a fairness control
-(`docs/SECURITY.md`). Second, the retrieval layer's weak-keyword matching
-is plain substring matching, which has real false-positive potential on
-unrelated prompts that happen to share a word (`docs/TROUBLESHOOTING.md`
-has a concrete example). Both are named gaps, not hidden ones.
-
-**"Have you run this against a real model API in production?"**
-No. `MockProvider` is what every test and the smoke test exercise.
-`AnthropicProvider` implements the same interface and would work with a
-real API key, but it has never been called in this project — that's
-stated directly in its own docstring and in the README, not glossed over.
-
-## Claims this project supports
-
-- Hands-on design and implementation of a rules-before-model gateway
-  pattern
-- Working Redis-backed caching, verified against a live local instance
-  (not mocked in that specific test)
-- Rate limiting, tracing, metrics, and audit logging that are all live
-  and unit/integration tested (30 tests passing)
-- A provider abstraction that swaps a mock for a real provider with a
-  one-line change, with the real-provider adapter shape written (not
-  exercised)
-
-## Claims this project does NOT support
-
-- Any real paid-API model usage
-- Production traffic or real users
-- Authentication/authorization on the gateway itself
-- A trained or ML-based content policy classifier (regex only)
+This repository does not establish production operation, users, professional deployment of related projects, paid-provider use, measured cost savings, or a latency target.

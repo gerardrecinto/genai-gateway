@@ -138,3 +138,5 @@ tests/                       unit and Redis integration tests (pytest)
 scripts/smoke_test.sh        black-box smoke test against a running instance
 docs/                         architecture, security, cost, troubleshooting, portfolio summary
 ```
+
+Optional paid help: [scoped gateway reviews](SUPPORT.md). Security reports: [private reporting policy](SECURITY.md).

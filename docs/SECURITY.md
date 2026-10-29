@@ -1,41 +1,21 @@
 # Security notes
 
-## What's implemented
+For private reports, use the [security policy](../SECURITY.md).
 
-- **Policy checks run before anything else** (`policy/rules.py`) — a
-  request that matches a secret-exfiltration or prompt-injection pattern
-  never reaches the cache, retrieval, or model. It's the first stage in
-  `GenAIGateway.handle()`, not a post-hoc filter.
-- **PII is detected but not silently swallowed into logs.** `audit.py`
-  never logs the raw prompt or response — only a truncated sha256 hash and
-  length. `pii_types_detected` (which category, not the actual value)
-  is the only PII-related field that reaches the audit record.
-- **Rate limiting is per-client**, not global — one noisy client can't
-  starve others' token budget (`rate_limit/token_bucket.py`, keyed by
-  `client_id`).
-- **Response validation checks for leaked-prompt markers**
-  (`gateway.py::validate_response`) before a model response is ever
-  returned or cached, catching the case where a model echoes back
-  something resembling its own system prompt.
+## Implemented controls
 
-## Known limitations (stated, not hidden)
+- Schema validation and the rate limiter run before policy. Policy checks run before cache, retrieval, and provider access. A matching block never reaches the provider.
+- Model responses are checked for empty text, excessive length, and specific leaked-prompt markers before they are cached or returned.
+- Generated and cached answers use the same hedging-phrase heuristic for human review. That heuristic does not determine correctness.
+- Audit records omit raw prompt and response text. They contain a truncated prompt hash and lengths. The caller-supplied `client_id` is logged verbatim, so it should not contain credentials or personal data. A hash is not an anonymity guarantee.
+- The optional local Redis container is bound to loopback. It has no authentication configured.
 
-- **Policy patterns are regex, not a trained classifier.** They catch the
-  literal phrasings tested in `tests/test_policy.py` and nothing more
-  creative — a determined attacker could rephrase around them. This is a
-  first layer, not a complete defense; a production system would want
-  this backed by a real classifier or a managed moderation API.
-- **No authentication on `/generate` or `/metrics`.** `client_id` is a
-  self-reported field in the request body, not derived from an API key or
-  session. Anyone can claim any `client_id`, which defeats the per-client
-  rate limit as a security control (though it still works as a fairness
-  control for well-behaved clients). Adding real auth (API key header,
-  mapped to `client_id` server-side) is a clear next step, not implemented.
-- **Redis has no auth configured** in `docker-compose.yml` (`redis:7-alpine`
-  with default settings) — fine for local dev, not how you'd run it in
-  production. See `docs/COST_NOTES.md`'s sibling note in `release-risk-ml`'s
-  IaC pattern: a real deployment needs `requirepass` or IAM-based auth (for
-  managed Redis) and TLS in transit.
-- **`AnthropicProvider` reads `ANTHROPIC_API_KEY` from an environment
-  variable**, never hardcoded — but there's no secrets-manager integration
-  here since it's never actually invoked in this portfolio.
+## Limits
+
+The API and metrics endpoint have no authentication. The caller chooses `client_id`, so the per-client token bucket is a fairness mechanism, not an authenticated security control. Its state is process-local.
+
+Policy rules are literal regular expressions, not a complete prompt-injection defense. The tests cover specific strings. A model response passing the validator is not proof that the response is safe or correct.
+
+The cache stores answer text and is shared across callers. This demo does not implement tenant isolation, a production cache access policy, managed secrets, or an audit retention service.
+
+`AnthropicProvider` reads an API key from the environment and requires an optional SDK. That adapter has not been exercised against a live provider in this project.
