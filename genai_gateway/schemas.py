@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 class GatewayRequest(BaseModel):
     client_id: str = Field(min_length=1, max_length=128)
     prompt: str = Field(min_length=1, max_length=8000)
-    context: dict[str, str] = Field(default_factory=dict)
+    context: dict[str, str] = Field(default_factory=dict, description="Reserved; not forwarded to providers or cache keys.")
 
 
 class GatewayResponse(BaseModel):
