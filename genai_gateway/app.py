@@ -12,17 +12,33 @@ from fastapi import FastAPI, HTTPException, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from genai_gateway.audit import configure_audit_logging
+from genai_gateway.audit_chain import AuditChain
 from genai_gateway.cache.cache_backend import get_cache_backend
+from genai_gateway.classification import ClassificationPolicy
 from genai_gateway.gateway import GenAIGateway, RateLimitExceeded
 from genai_gateway.providers.mock_provider import MockProvider
 from genai_gateway.rate_limit.token_bucket import TokenBucketLimiter
 from genai_gateway.schemas import GatewayRequest, GatewayResponse
+from genai_gateway.sensitive import install_log_redaction
 
 RATE_LIMIT_CAPACITY = int(os.environ.get("RATE_LIMIT_CAPACITY", "20"))
 RATE_LIMIT_REFILL_PER_SECOND = float(os.environ.get("RATE_LIMIT_REFILL_PER_SECOND", "1"))
 CACHE_TTL_SECONDS = int(os.environ.get("CACHE_TTL_SECONDS", "300"))
 
 configure_audit_logging()
+install_log_redaction()
+
+
+def _audit_chain_from_env() -> AuditChain | None:
+    path = os.environ.get("GATEWAY_AUDIT_CHAIN_PATH")
+    if not path:
+        return None
+    key = os.environ.get("GATEWAY_AUDIT_KEY")
+    if not key:
+        raise RuntimeError("GATEWAY_AUDIT_CHAIN_PATH is set but GATEWAY_AUDIT_KEY is not; run `python -m genai_gateway.audit_chain keygen`")
+    return AuditChain(path, key)
+
+
 app = FastAPI(title="genai-gateway")
 
 _gateway = GenAIGateway(
@@ -30,6 +46,8 @@ _gateway = GenAIGateway(
     cache=get_cache_backend(os.environ.get("REDIS_URL")),
     rate_limiter=TokenBucketLimiter(RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_PER_SECOND),
     cache_ttl_seconds=CACHE_TTL_SECONDS,
+    classification=ClassificationPolicy.from_env(),
+    audit_chain=_audit_chain_from_env(),
 )
 
 

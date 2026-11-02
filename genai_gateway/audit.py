@@ -7,7 +7,9 @@ system to build later, not something this log should hold by default.
 import hashlib
 import json
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+
+from genai_gateway.sensitive import redact
 
 logger = logging.getLogger("genai_gateway.audit")
 
@@ -40,6 +42,8 @@ class AuditRecord:
     prompt_tokens: int | None
     completion_tokens: int | None
     total_latency_ms: float
+    classification_mode: str = "redact"
+    redacted_types: list[str] = field(default_factory=list)
 
 
 def build_audit_record(
@@ -55,13 +59,17 @@ def build_audit_record(
     prompt_tokens: int | None,
     completion_tokens: int | None,
     total_latency_ms: float,
+    classification_mode: str = "redact",
 ) -> AuditRecord:
+    # Hash the redacted prompt. Hashing the raw text let anyone with the log
+    # test guesses against low-entropy identifiers such as an SSN.
+    redacted = redact(prompt)
     return AuditRecord(
         request_id=request_id,
         client_id=client_id,
         decision_source=decision_source,
-        prompt_hash=_hash(prompt),
-        prompt_length=len(prompt),
+        prompt_hash=_hash(redacted.text),
+        prompt_length=len(redacted.text),
         pii_types_detected=pii_types_detected,
         response_length=len(response_text),
         blocked_reason=blocked_reason,
@@ -69,6 +77,10 @@ def build_audit_record(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_latency_ms=total_latency_ms,
+        classification_mode=classification_mode,
+        # By the time a redact-mode request reaches the audit call its prompt is
+        # already clean, so take the detected types from the policy result.
+        redacted_types=pii_types_detected if classification_mode == "redact" else [],
     )
 
 

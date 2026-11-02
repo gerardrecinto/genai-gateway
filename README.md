@@ -82,6 +82,73 @@ CI runs the tests with a real Redis service and fails if that service is unavail
 
 The request's `context` mapping is reserved. It is not forwarded to the provider or included in cache keys.
 
+## Sensitive-data handling
+
+Added so the gateway can sit in front of prompts that contain identifiers, with controls that are tested and enforced in CI. **All test data is synthetic. This is an engineering control mapping from a portfolio project. It is not a HIPAA, FDA or any other compliance claim, and I have not shipped software under those regimes.**
+
+| Control | Where | What it does |
+|---|---|---|
+| Detect and redact | `sensitive.py`, `policy/rules.py` | SSN, card number, email, phone, medical record number and labeled date of birth become `[SSN]`, `[EMAIL]` and so on before retrieval, the cache key or the model sees the prompt |
+| Per-client policy | `classification.py` | `allow`, `redact` (default) or `block` per `client_id`, set with `GATEWAY_DATA_POLICY`. Block returns `sensitive_data_blocked` and never calls the model |
+| Log redaction | `sensitive.py` | A log record factory redacts every message in the process, not only the audit logger |
+| Tamper-evident audit chain | `audit_chain.py` | One JSON line per request, each hash covers the previous hash, so edits, deletions and reordering break verification |
+| Encrypted payloads | `audit_chain.py` | Payloads (record plus the redacted prompt) are encrypted with Fernet from the `cryptography` package; key in `GATEWAY_AUDIT_KEY` |
+| Controls as CI checks | `scripts/controls_check.sh`, `controls` job | Fails the build if redaction tests, the end-to-end tamper check or the secrets scan fail |
+
+Turn on the chain:
+
+```bash
+export GATEWAY_AUDIT_KEY=$(python -m genai_gateway.audit_chain keygen)
+export GATEWAY_AUDIT_CHAIN_PATH=./audit.jsonl
+export GATEWAY_DATA_POLICY='{"default":"redact","clients":{"clinic-app":"block"}}'
+uvicorn genai_gateway.app:app --port 8000
+
+python -m genai_gateway.audit_chain verify ./audit.jsonl --key-env GATEWAY_AUDIT_KEY
+python -m genai_gateway.audit_chain head ./audit.jsonl   # store this value somewhere else
+```
+
+### Control mapping (engineering view only)
+
+| Engineering control | Intent it supports |
+|---|---|
+| Redact before model call, per-client block | Minimum necessary data leaves the boundary |
+| Hash-chained, encrypted audit log with a verifier | Records of access that show if they were altered |
+| Fail closed on audit write errors | No answer returned without an audit entry |
+| Secrets scan and redaction tests gating the build | Controls cannot be dropped silently in a change |
+
+### What it does not do
+
+- Pattern matching finds identifiers that look like identifiers. It does not find free-text names, street addresses or diagnoses. A real deployment needs a trained detector on top, and a decision about what counts as sensitive.
+- The chain proves internal consistency. Someone who can rewrite the whole file can recompute the hashes. Verifying with the key catches forged payloads, and storing the `head` hash elsewhere (`--expect-head`) catches truncation and full rewrites. Tests cover each of these cases, including the one that passes without the key and fails with it.
+- Fernet uses one shared key, with no rotation or KMS here. The key sits in an environment variable.
+- Fail closed means an unwritable audit file returns a 500 even though the model already ran. I chose auditability over availability; flip that if uptime matters more.
+- The provider is still the mock. Nothing here was run against a real model or real patient data.
+
+### Bugs found while building it
+
+- The audit `prompt_hash` was a hash of the raw prompt. A low-entropy identifier such as an SSN could be recovered by hashing guesses against the log. It now hashes the redacted prompt (regression test `test_prompt_hash_ignores_the_identifier_value`).
+- In redact mode the audit record reported no redacted types, because the prompt had already been cleaned by the time the record was built. Caught by `test_audit_log_never_contains_the_raw_identifier`; the types now come from the policy result.
+- `prompt_length` differed between block and redact requests for the same prompt (original versus redacted length). It is now always the redacted length.
+- A labeled date of birth is redacted together with its label, so `DOB: 04/17/1968` becomes `[DOB]`. My first test expected the label to stay.
+
+### Verified output
+
+```
+$ python -m pytest tests -q
+67 passed, 3 skipped          # the 3 skipped need a local Redis
+
+$ scripts/controls_check.sh
+36 passed in 0.25s
+ok: no raw identifiers in the audit file
+OK: 3 entries, head <sha256>
+verifier output on the tampered copy: FAIL: seq 2: entry hash does not match its contents
+ok: tampered chain rejected
+ok: no secrets detected in tracked files
+All controls passed.
+```
+
+I also checked that the gate can fail: a planted fake AWS key made the secrets scan exit 1, and disabling the substitution in `redact()` made `controls_check.sh` exit 1.
+
 ## Why retrieval-before-model, not RAG
 
 `retrieval/knowledge_base.py` is a small hand-authored dict of runbook
@@ -130,6 +197,9 @@ genai_gateway/
     anthropic_provider.py   real-provider adapter shape, unexercised
   tracing.py                request id + per-stage latency
   audit.py                  structured audit log, hash-only, no raw content
+  sensitive.py              identifier detection, redaction, log redaction
+  classification.py         per-client allow / redact / block policy
+  audit_chain.py            hash-chained, encrypted audit trail plus verifier CLI
   metrics.py                Prometheus counters/histograms
   gateway.py                orchestrates the full pipeline
   app.py                    FastAPI service
