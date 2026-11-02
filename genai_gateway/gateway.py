@@ -9,15 +9,19 @@ import hashlib
 import json
 import logging
 import time
+from dataclasses import asdict
 
 from genai_gateway import metrics
 from genai_gateway.audit import build_audit_record, emit_audit_log
+from genai_gateway.audit_chain import AuditChain
 from genai_gateway.cache.cache_backend import CacheBackend
+from genai_gateway.classification import ClassificationPolicy
 from genai_gateway.policy.rules import evaluate_policy
 from genai_gateway.providers.base import ModelProvider
 from genai_gateway.rate_limit.token_bucket import TokenBucketLimiter
 from genai_gateway.retrieval.knowledge_base import match_knowledge_base
 from genai_gateway.schemas import GatewayRequest, GatewayResponse
+from genai_gateway.sensitive import redact
 from genai_gateway.tracing import RequestTrace
 
 logger = logging.getLogger(__name__)
@@ -63,11 +67,15 @@ class GenAIGateway:
         cache: CacheBackend,
         rate_limiter: TokenBucketLimiter,
         cache_ttl_seconds: int = 300,
+        classification: ClassificationPolicy | None = None,
+        audit_chain: AuditChain | None = None,
     ):
         self.provider = provider
         self.cache = cache
         self.rate_limiter = rate_limiter
         self.cache_ttl_seconds = cache_ttl_seconds
+        self.classification = classification or ClassificationPolicy()
+        self.audit_chain = audit_chain
 
     def handle(self, request: GatewayRequest) -> GatewayResponse:
         trace = RequestTrace()
@@ -93,6 +101,25 @@ class GenAIGateway:
                 pii_types=policy_result.pii_types_detected,
                 cache_key=None,
             )
+
+        mode = self.classification.mode_for(request.client_id)
+        if policy_result.pii_types_detected and mode == "block":
+            return self._finish(
+                request=request,
+                trace=trace,
+                start=start,
+                decision_source="policy_block",
+                text="Request blocked by policy.",
+                high_confidence=True,
+                needs_human_review=False,
+                blocked_reason="sensitive_data_blocked",
+                pii_types=policy_result.pii_types_detected,
+                cache_key=None,
+            )
+        if policy_result.pii_types_detected and mode == "redact":
+            # From here on, retrieval, the cache key and the model only ever
+            # see the redacted prompt.
+            request = request.model_copy(update={"prompt": redact(request.prompt).text})
 
         context_for_model: str | None = None
         with trace.stage("retrieval"):
@@ -247,8 +274,13 @@ class GenAIGateway:
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_latency_ms=total_latency_ms,
+            classification_mode=self.classification.mode_for(request.client_id),
         )
         emit_audit_log(record)
+        if self.audit_chain is not None:
+            # Fail closed: if the trail cannot be written, the request errors
+            # instead of returning an answer that has no audit entry.
+            self.audit_chain.append({**asdict(record), "redacted_prompt": redact(request.prompt).text})
 
         return GatewayResponse(
             request_id=trace.request_id,

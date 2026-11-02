@@ -19,10 +19,15 @@ PROMPT_INJECTION_PATTERNS = [
     re.compile(r"\byou\s+are\s+now\s+(in\s+)?dan\s+mode\b", re.IGNORECASE),
 ]
 
+# Order matters for redaction: more specific identifiers come first so a
+# medical record number is not half-eaten by a looser digit pattern.
 PII_PATTERNS = {
     "ssn": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
     "credit_card": re.compile(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"),
     "email": re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.-]+\b"),
+    "mrn": re.compile(r"\b(?:MRN|medical\s+record(?:\s+(?:number|no\.?))?)[:#\s]*\d{5,10}\b", re.IGNORECASE),
+    "dob": re.compile(r"\b(?:DOB|date\s+of\s+birth|born(?:\s+on)?)[:\s]*\d{1,2}[/-]\d{1,2}[/-](?:\d{4}|\d{2})\b", re.IGNORECASE),
+    "phone": re.compile(r"(?<![\w-])(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]\d{3}[\s.-]\d{4}(?![\w-])"),
 }
 
 
