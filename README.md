@@ -129,6 +129,7 @@ python -m genai_gateway.audit_chain head ./audit.jsonl   # store this value some
 - The audit `prompt_hash` was a hash of the raw prompt. A low-entropy identifier such as an SSN could be recovered by hashing guesses against the log. It now hashes the redacted prompt (regression test `test_prompt_hash_ignores_the_identifier_value`).
 - In redact mode the audit record reported no redacted types, because the prompt had already been cleaned by the time the record was built. Caught by `test_audit_log_never_contains_the_raw_identifier`; the types now come from the policy result.
 - `prompt_length` differed between block and redact requests for the same prompt (original versus redacted length). It is now always the redacted length.
+- CI caught two problems with my own change on the first push: the existing dependency audit rejected the `cryptography` version I first pinned (10 advisories, now 50.0.2), and the new secrets scan flagged the line that installs the scanner itself, which needed an allowlist pragma.
 - A labeled date of birth is redacted together with its label, so `DOB: 04/17/1968` becomes `[DOB]`. My first test expected the label to stay.
 
 ### Verified output
