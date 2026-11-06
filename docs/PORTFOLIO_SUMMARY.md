@@ -12,7 +12,7 @@ This is an independently built local gateway. It demonstrates policy and structu
 
 See the current [Gateway checks](https://github.com/gerardrecinto/genai-gateway/actions/workflows/ci.yml) for results. Local runs without Redis skip those integration tests explicitly.
 
-## Limits to explain in an interview
+## Limits
 
 The rate limiter trusts a caller-supplied client ID and is process-local. It is not authentication or a shared spending limit. Policy checks are literal regular expressions. Retrieval uses three hand-authored entries and substring matching. Confidence is a hedging-phrase heuristic, not a calibrated probability or correctness check.
 
