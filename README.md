@@ -2,7 +2,7 @@
 
 A local GenAI gateway for engineers testing policy and retrieval before a model call. It includes a mock provider, optional Redis caching, process-local rate limiting, timing, and audit records without raw prompt or response text.
 
-**Scope:** I built this independently as a portfolio project. I have no prior professional experience operating production GenAI infrastructure at this scope. The default provider is a local mock, so the checked-in path needs no paid API.
+**Scope:** This is a local lab, not a production GenAI deployment. The default provider is a local mock, so the checked-in path needs no paid API.
 
 ## Request path
 
